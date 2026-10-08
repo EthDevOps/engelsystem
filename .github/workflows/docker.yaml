@@ -1,76 +1,97 @@
 name: Docker
 
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
+# Builds the image straight from upstream engelsystem/engelsystem whenever it
+# publishes a new vX.Y.Z tag, then creates a matching release on this repo.
 
 on:
-  push:
-    branches: [ "main" ]
-    # Publish semver tags as releases.
-    tags: [ 'v*.*.*' ]
-  pull_request:
-    branches: [ "main" ]
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Upstream tag to build (default: latest vX.Y.Z)'
+        required: false
 
 env:
-  # Use docker.io for Docker Hub if empty
   REGISTRY: ghcr.io
-  # github.repository as <account>/<repo>
   IMAGE_NAME: ${{ github.repository }}
-
+  UPSTREAM: engelsystem/engelsystem
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
-      # This is used to complete the identity challenge
-      # with sigstore/fulcio when running outside of PRs.
-      id-token: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Find new upstream release
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          TAG="${INPUT_TAG:-$(git ls-remote --tags --refs "https://github.com/$UPSTREAM.git" 'refs/tags/v*' \
+            | sed 's|.*refs/tags/||' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "$TAG already released, nothing to do"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
 
-      # Set up BuildKit Docker container builder to be able to build
-      # multi-platform images and export cache
-      # https://github.com/docker/setup-buildx-action
+      - name: Checkout upstream ${{ steps.tag.outputs.tag }}
+        if: steps.tag.outputs.new
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM }}
+          ref: ${{ steps.tag.outputs.tag }}
+
       - name: Set up Docker Buildx
+        if: steps.tag.outputs.new
         uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226 # v3.0.0
 
-      # Login against a Docker registry except on PR
-      # https://github.com/docker/login-action
       - name: Log into registry ${{ env.REGISTRY }}
-        if: github.event_name != 'pull_request'
+        if: steps.tag.outputs.new
         uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d # v3.0.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Extract metadata (tags, labels) for Docker
-      # https://github.com/docker/metadata-action
       - name: Extract Docker metadata
+        if: steps.tag.outputs.new
         id: meta
         uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=latest,enable=${{ inputs.tag == '' }}
+            type=semver,pattern={{version}},value=${{ steps.tag.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.tag.outputs.tag }}
+            type=semver,pattern={{major}},value=${{ steps.tag.outputs.tag }}
 
-      # Build and push Docker image with Buildx (don't push on PR)
-      # https://github.com/docker/build-push-action
       - name: Build and push Docker image
-        id: build-and-push
+        if: steps.tag.outputs.new
         uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
         with:
           context: .
           file: docker/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
+          build-args: VERSION=${{ steps.tag.outputs.tag }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Create release
+        if: steps.tag.outputs.new
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" \
+            --notes "Upstream release: https://github.com/$UPSTREAM/releases/tag/$TAG
 
-
+          Image: \`$REGISTRY/${IMAGE_NAME,,}:${TAG#v}\`"
