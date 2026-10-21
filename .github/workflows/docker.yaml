@@ -11,6 +11,12 @@ on:
       tag:
         description: 'Upstream tag to build (default: latest vX.Y.Z)'
         required: false
+      php_ref:
+        description: 'docker-library/php commit to build the PHP base from (default: use php:8.5-fpm-alpine from Docker Hub)'
+        required: false
+      suffix:
+        description: 'Rebuild: push only <version><suffix> (e.g. -php8.5.12), skip release check and creation'
+        required: false
 
 env:
   REGISTRY: ghcr.io
@@ -30,11 +36,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_TAG: ${{ inputs.tag }}
+          INPUT_SUFFIX: ${{ inputs.suffix }}
         run: |
           TAG="${INPUT_TAG:-$(git ls-remote --tags --refs "https://github.com/$UPSTREAM.git" 'refs/tags/v*' \
             | sed 's|.*refs/tags/||' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          if [ -n "$INPUT_SUFFIX" ]; then
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          elif gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "$TAG already released, nothing to do"
           else
             echo "new=true" >> "$GITHUB_OUTPUT"
@@ -59,6 +69,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Interim until php:8.5.12-fpm-alpine is on Docker Hub: build the official
+      # image ourselves from docker-library/php and use it as the base.
+      - name: Build PHP base from docker-library/php ${{ inputs.php_ref }}
+        if: steps.tag.outputs.new && inputs.php_ref != ''
+        uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
+        with:
+          context: https://github.com/docker-library/php.git#${{ inputs.php_ref }}:8.5/alpine3.24/fpm
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:php-base-${{ inputs.php_ref }}
+
+      - name: Use self-built PHP base
+        if: steps.tag.outputs.new && inputs.php_ref != ''
+        env:
+          PHP_REF: ${{ inputs.php_ref }}
+        run: sed -i "s|^FROM php:8.5-fpm-alpine\$|FROM $REGISTRY/${IMAGE_NAME,,}:php-base-$PHP_REF|" docker/Dockerfile && grep -q php-base- docker/Dockerfile
+
+      # php2shell (CVE-2026-109618/109619) interim hardening.
+      # Remove once the base ships PHP >= 8.5.12.
+      - name: Add php2shell hardening
+        if: steps.tag.outputs.new
+        run: |
+          cat >> docker/Dockerfile <<'EOF'
+          RUN printf '%s\n' 'memory_limit = -1' 'session.upload_progress.enabled = 0' 'fatal_error_backtraces = 0' 'max_input_nesting_level = 8' \
+                > /usr/local/etc/php/conf.d/zz-php2shell.ini && \
+              printf '%s\n' '[www]' 'pm.max_requests = 1' > /usr/local/etc/php-fpm.d/zzz-php2shell.conf
+          EOF
+
       - name: Extract Docker metadata
         if: steps.tag.outputs.new
         id: meta
@@ -67,10 +104,11 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           flavor: latest=false
           tags: |
-            type=raw,value=latest,enable=${{ inputs.tag == '' }}
-            type=semver,pattern={{version}},value=${{ steps.tag.outputs.tag }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ steps.tag.outputs.tag }}
-            type=semver,pattern={{major}},value=${{ steps.tag.outputs.tag }}
+            type=raw,value=${{ steps.tag.outputs.version }}${{ inputs.suffix }},enable=${{ inputs.suffix != '' }}
+            type=raw,value=latest,enable=${{ inputs.tag == '' && inputs.suffix == '' }}
+            type=semver,pattern={{version}},value=${{ steps.tag.outputs.tag }},enable=${{ inputs.suffix == '' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.tag.outputs.tag }},enable=${{ inputs.suffix == '' }}
+            type=semver,pattern={{major}},value=${{ steps.tag.outputs.tag }},enable=${{ inputs.suffix == '' }}
 
       - name: Build and push Docker image
         if: steps.tag.outputs.new
@@ -86,7 +124,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Create release
-        if: steps.tag.outputs.new
+        if: steps.tag.outputs.new && inputs.suffix == ''
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.tag.outputs.tag }}
