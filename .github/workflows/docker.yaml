@@ -77,7 +77,8 @@ jobs:
         with:
           context: https://github.com/docker-library/php.git#${{ inputs.php_ref }}:8.5/alpine3.24/fpm
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:php-base-${{ inputs.php_ref }}
+          # lowercase on purpose: buildx rejects the repo's mixed-case name
+          tags: ${{ env.REGISTRY }}/ethdevops/engelsystem:php-base-${{ inputs.php_ref }}
 
       - name: Use self-built PHP base
         if: steps.tag.outputs.new && inputs.php_ref != ''
