@@ -36,9 +36,7 @@ Actions → Docker → *Run workflow*. Leave the tag empty to build the latest u
 
 To rebuild a version that has already been released, delete its GitHub release first.
 
-To rebuild with a security fix without touching existing tags, set `suffix` (e.g. `-php8.5.12`): only `<version><suffix>` is pushed and no release is created. `php_ref` builds the PHP base from that [docker-library/php](https://github.com/docker-library/php) commit instead of pulling `php:8.5-fpm-alpine`, for when a patched PHP is not on Docker Hub yet.
-
-**Temporary:** every build currently appends php2shell (CVE-2026-109618/109619) hardening to the image (`conf.d/zz-php2shell.ini`, `php-fpm.d/zzz-php2shell.conf` with `pm.max_requests = 1`). Remove that step once the base ships PHP >= 8.5.12.
+To rebuild with a security fix without touching existing tags, set `suffix` (e.g. `-php8.5.12`): only `<version><suffix>` is pushed and no release is created.
 
 ## Caveats
 
