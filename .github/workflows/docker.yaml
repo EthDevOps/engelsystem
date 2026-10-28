@@ -17,11 +17,15 @@ on:
       suffix:
         description: 'Rebuild: push only <version><suffix> (e.g. -php8.5.12), skip release check and creation'
         required: false
+      plugin_ref:
+        description: 'Devcon build: maggo/engelsystem-telegram release commit to bundle (full SHA of a vX.Y.Z tag; use with tag=<upstream main SHA>, suffix=-devcon)'
+        required: false
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   UPSTREAM: engelsystem/engelsystem
+  PLUGIN_REPO: maggo/engelsystem-telegram
 
 jobs:
   build:
@@ -56,6 +60,32 @@ jobs:
         with:
           repository: ${{ env.UPSTREAM }}
           ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Checkout Telegram plugin ${{ inputs.plugin_ref }}
+        if: steps.tag.outputs.new && inputs.plugin_ref != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.PLUGIN_REPO }}
+          ref: ${{ inputs.plugin_ref }}
+          path: _telegram
+
+      # The Dockerfile copies resources/plugins; Engelsystem names the plugin after its folder
+      - name: Add Telegram plugin
+        if: steps.tag.outputs.new && inputs.plugin_ref != ''
+        run: |
+          rm -rf _telegram/.git
+          mv _telegram resources/plugins/Telegram
+          jq -r '"\(.name) \(.version)"' resources/plugins/Telegram/composer.json
+
+      # Upstream main still locks vulnerable versions; drop once it bumps them.
+      # Fails if the constraints can't be met (e.g. on a release tag with symfony/yaml 7.x).
+      - name: Lock symfony security fixes
+        if: steps.tag.outputs.new && inputs.plugin_ref != ''
+        run: |
+          docker run --rm -v "$PWD:/app" -w /app composer:latest composer update \
+            symfony/http-foundation symfony/yaml --with-dependencies --no-install --no-scripts --ignore-platform-reqs \
+            --with 'symfony/http-foundation:^7.4.21' --with 'symfony/yaml:^8.1.9'
+          jq -r '.packages[] | select(.name | test("^symfony/(http-foundation|yaml)$")) | "\(.name) \(.version)"' composer.lock
 
       - name: Set up Docker Buildx
         if: steps.tag.outputs.new
