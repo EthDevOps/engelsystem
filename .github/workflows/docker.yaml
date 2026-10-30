@@ -15,7 +15,7 @@ on:
         description: 'Rebuild: push only <version><suffix> (e.g. -php8.5.12), skip release check and creation'
         required: false
       plugin_ref:
-        description: 'Devcon build: maggo/engelsystem-telegram release commit to bundle (full SHA of a vX.Y.Z tag; use with tag=<upstream main SHA>, suffix=-devcon)'
+        description: 'Devcon build: maggo/engelsystem-telegram release commit to bundle (full SHA of a vX.Y.Z tag; use with tag=<upstream main SHA>, suffix=-devcon; the image tag gets a -telegram-v<plugin version> suffix)'
         required: false
 
 env:
@@ -68,11 +68,14 @@ jobs:
 
       # The Dockerfile copies resources/plugins; Engelsystem names the plugin after its folder
       - name: Add Telegram plugin
+        id: add_plugin
         if: steps.tag.outputs.new && inputs.plugin_ref != ''
         run: |
           rm -rf _telegram/.git
           mv _telegram resources/plugins/Telegram
           jq -r '"\(.name) \(.version)"' resources/plugins/Telegram/composer.json
+          # Give each plugin release its own image tag (same upstream commit can serve many)
+          echo "plugin_suffix=-telegram-v$(jq -r '.version' resources/plugins/Telegram/composer.json)" >> "$GITHUB_OUTPUT"
 
       # Upstream main still locks vulnerable versions; drop once it bumps them.
       # Fails if the constraints can't be met (e.g. on a release tag with symfony/yaml 7.x).
@@ -104,7 +107,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           flavor: latest=false
           tags: |
-            type=raw,value=${{ steps.tag.outputs.version }}${{ inputs.suffix }},enable=${{ inputs.suffix != '' }}
+            type=raw,value=${{ steps.tag.outputs.version }}${{ inputs.suffix }}${{ steps.add_plugin.outputs.plugin_suffix }},enable=${{ inputs.suffix != '' }}
             type=raw,value=latest,enable=${{ inputs.tag == '' && inputs.suffix == '' }}
             type=semver,pattern={{version}},value=${{ steps.tag.outputs.tag }},enable=${{ inputs.suffix == '' }}
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.tag.outputs.tag }},enable=${{ inputs.suffix == '' }}
