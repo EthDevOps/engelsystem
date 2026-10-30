@@ -44,7 +44,7 @@ The Telegram plugin needs upstream's plugin system, which no release has yet, so
 
 - `tag`: the upstream main commit SHA (e.g. `f09f95ecd012217d3a91c7db5e9e1be4c5177d32`)
 - `suffix`: `-devcon`
-- `plugin_ref`: the commit SHA of a [maggo/engelsystem-telegram](https://github.com/maggo/engelsystem-telegram) release (e.g. `6ab00c6ba030f8cf74ffc97184159a2ce18333d3` = `v1.0.1`). Its CHANGELOG names the Engelsystem commit each release was tested against; use that as `tag`.
+- `plugin_ref`: the commit SHA of a [maggo/engelsystem-telegram](https://github.com/maggo/engelsystem-telegram) release (e.g. `5b6d52e03621d1344d618579c43a2c9c2bc79699` = `v1.1.0`). Its CHANGELOG names the Engelsystem commit each release was tested against; use that as `tag`.
 
 This pushes only `ghcr.io/ethdevops/engelsystem:<sha>-devcon` and creates no release. The plain tags stay pure upstream. With `plugin_ref` set, the build also locks `symfony/http-foundation` ≥ 7.4.21 and `symfony/yaml` ≥ 8.1.9, because upstream main still locks vulnerable versions. Drop that step once upstream bumps them. After deploying, run Admin › Plugins › Telegram › Install (first time) or Update (new release) so that its migrations run. Never Uninstall: it drops the plugin's tables. Platform needs (public webhook, outbound HTTPS to Telegram, an optional `/telegram/tick` pinger): see the plugin's README.
 
